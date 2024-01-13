@@ -30,11 +30,11 @@ class LogVars:
     def parse(gcmd, level):
         name = gcmd.get('NAME', None)
         msg = gcmd.get('MSG')
-        display = gcmd.getint('DISPLAY', 0)
-        notify = gcmd.getint('NOTIFY', 0)
+        display = gcmd.get_int('DISPLAY', 0)
+        notify = gcmd.get_int('NOTIFY', 0)
         return LogVars(level, name, msg, display, notify)
 
-    def __init__(self, level: Level, name: str, msg: str, display: bool, notify: bool):
+    def __init__(self, level: Level, name: str, msg: str, display: bool = False, notify: bool = False):
         self.level = level
         self.name = name
         self.msg = msg
@@ -91,9 +91,8 @@ class MacroLog:
 
         self.printer.register_event_handler('klippy:connect', self.handle_connect)
         self.printer.register_event_handler("klippy:disconnect", self.handle_disconnect)
-        self.printer.register_event_handler("klippy:ready", self.handle_ready)
 
-        self.log_level = config.getint('log_level', 1, minval=0, maxval=4)
+        self.log_level = config.getint('log_level', 2, minval=0, maxval=4)
         self.log_file_level = config.getint('log_file_level', 0, minval=0, maxval=4)
         self.log_format = config.get('format', '%(asctime)s %(message)s')
         self.log_date_format = config.get('date_format', '%H:%M:%S')
@@ -103,19 +102,25 @@ class MacroLog:
 
         self.gcode = self.printer.lookup_object('gcode')
 
+        self.gcode.register_command('_LOG', self.cmd_LOG, desc=self.cmd_LOG_help)
         self.gcode.register_command('_TRACE', self.cmd_TRACE, desc=self.cmd_TRACE_help)
         self.gcode.register_command('_DEBUG', self.cmd_DEBUG, desc=self.cmd_DEBUG_help)
         self.gcode.register_command('_INFO',  self.cmd_INFO,  desc=self.cmd_INFO_help)
         self.gcode.register_command('_WARN',  self.cmd_WARN,  desc=self.cmd_WARN_help)
         self.gcode.register_command('_ERROR', self.cmd_ERROR, desc=self.cmd_ERROR_help)
+        self.gcode.register_command('_PRINT', self.cmd_PRINT, desc=self.cmd_PRINT_help)
 
     def _log(self, lv: LogVars):
-        message = f"{lv.level.name} <{lv.name}>: {lv.msg}"
-        if self.logger and self.log_file_level >= lv.level.value:
+        if lv.level is None:
+            message = f"{lv.name}: {lv.msg}"
+            self.logger.info(message)
+        else:
+            message = f"{lv.level.name} <{lv.name}>: {lv.msg}"
+        if lv.level is None or (self.logger and self.log_file_level >= lv.level.value):
             self.logger.info(message)
         if lv.display:
             self.gcode._process_commands([f"SET_DISPLAY_TEXT MSG={message}"], False)
-        if self.log_level >= lv.level.value:
+        if lv.level is None or self.log_level >= lv.level.value:
             if lv.notify:
                 self.gcode.respond_info(f"MR_NOTIFY: | {message}")
             else:
@@ -125,24 +130,34 @@ class MacroLog:
         self._setup_logging()
 
     def handle_disconnect(self):
-        self._trace("Disconnecting...")
+        self._log(LogVars(Level.TRACE, "ML", "Disconnecting"))
 
     def _setup_logging(self):
         # Setup background file based logging before logging any messages
-        if self.log_file_level >= 0:
+        if self.log_file_level >= Level.TRACE.value:
             logfile_path = self.printer.start_args['log_file']
             dirname = os.path.dirname(logfile_path)
             if dirname is None:
                 ml_filepath = '/tmp/ml.log'
             else:
                 ml_filepath = dirname + '/ml.log'
-            self._trace(f"{ml_filepath = }")
             self.queue_listener = QueueListener(ml_filepath)
             self.queue_listener.setFormatter(MultiLineFormatter(self.log_format, datefmt=self.log_date_format))
             queue_handler = QueueHandler(self.queue_listener.bg_queue)
             self.logger = logging.getLogger('ML')
             self.logger.setLevel(logging.NOTSET)
             self.logger.addHandler(queue_handler)
+            self._log(LogVars(None, "ML", f"\n ----- Initializing with {ml_filepath = } ----- "))
+
+    cmd_LOG_help = ("")
+    def cmd_LOG(self, gcmd):
+        lvl = gcmd.get('LVL', None)
+        if lvl is not None:
+            lvl = lvl.upper()
+            for l in Level:
+                if l.name == lvl:
+                    lvl = l
+        self._log(LogVars.parse(gcmd, lvl))
 
     cmd_TRACE_help = ("")
     def cmd_TRACE(self, gcmd):
@@ -163,6 +178,10 @@ class MacroLog:
     cmd_ERROR_help = ("")
     def cmd_ERROR(self, gcmd):
         self._log(LogVars.parse(gcmd, Level.ERROR))
+
+    cmd_PRINT_help = ("")
+    def cmd_PRINT(self, gcmd):
+        self._log(LogVars.parse(gcmd, None))
 
 def load_config(config): # Called by klipper from [macro_log]
     return MacroLog(config)
