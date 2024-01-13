@@ -126,7 +126,7 @@ class MacroLog:
                 self.logger.info(message)
 
         if lv.display:
-            self.gcode._process_commands([f"SET_DISPLAY_TEXT MSG={message}"], False)
+            self.gcode._process_commands([f"SET_DISPLAY_TEXT MSG=\"{message}\""], False)
 
         if lv.level is None or self.log_level <= lv.level:
             if lv.notify:
