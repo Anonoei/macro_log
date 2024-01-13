@@ -121,7 +121,7 @@ class MacroLog:
             message = f"{lv.name}: {lv.msg}"
             self.logger.info(message)
         else:
-            message = f"{lv.level.name} <{lv.name}>: {lv.msg}"
+            message = f"{lv.level.name} [{lv.name}]: {lv.msg}"
             if self.log_file_level <= lv.level:
                 self.logger.info(message)
 
