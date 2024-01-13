@@ -97,6 +97,12 @@ class MacroLog:
         self.log_format = config.get('format', '%(asctime)s %(message)s')
         self.log_date_format = config.get('date_format', '%H:%M:%S')
 
+        for lvl in Level:
+            if self.log_level == lvl.value:
+                self.log_level = lvl
+            if self.log_file_level == lvl.value:
+                self.log_file_level = lvl
+
         self.queue_listener = None
         self.logger = None
 
@@ -116,15 +122,19 @@ class MacroLog:
             self.logger.info(message)
         else:
             message = f"{lv.level.name} <{lv.name}>: {lv.msg}"
-        if lv.level is None or (self.logger and self.log_file_level >= lv.level.value):
-            self.logger.info(message)
+            if self.log_file_level <= lv.level:
+                self.logger.info(message)
+
         if lv.display:
             self.gcode._process_commands([f"SET_DISPLAY_TEXT MSG={message}"], False)
-        if lv.level is None or self.log_level >= lv.level.value:
+
+        if lv.level is None or self.log_level <= lv.level:
             if lv.notify:
-                self.gcode.respond_info(f"MR_NOTIFY: | {message}")
-            else:
-                self.gcode.respond_info(message)
+                message = f"MR_NOTIFY | {message}"
+            if lv.level == Level.ERROR:
+                self.gcode._respond_error(message)
+                return
+            self.gcode.respond_info(message)
 
     def handle_connect(self):
         self._setup_logging()
@@ -134,7 +144,7 @@ class MacroLog:
 
     def _setup_logging(self):
         # Setup background file based logging before logging any messages
-        if self.log_file_level >= Level.TRACE.value:
+        if self.log_file_level >= Level.TRACE:
             logfile_path = self.printer.start_args['log_file']
             dirname = os.path.dirname(logfile_path)
             if dirname is None:
@@ -147,7 +157,8 @@ class MacroLog:
             self.logger = logging.getLogger('ML')
             self.logger.setLevel(logging.NOTSET)
             self.logger.addHandler(queue_handler)
-            self._log(LogVars(None, "ML", f"\n ----- Initializing with {ml_filepath = } ----- "))
+            self._log(LogVars(None, "MACRO_LOG", f"\n ----- Initializing with {ml_filepath = } ----- "))
+            self._log(LogVars(None, "MACRO_LOG", f"\\--> Using level: {self.log_level.name}, file_level: {self.log_file_level.name} "))
 
     cmd_LOG_help = ("")
     def cmd_LOG(self, gcmd):
@@ -157,8 +168,10 @@ class MacroLog:
             for l in Level:
                 if l.name == lvl:
                     lvl = l
+            if lvl is None:
+                self._log(LogVars(None, "MACRO_LOG", f"Failed to find log level from {lvl}"))
+                return
         self._log(LogVars.parse(gcmd, lvl))
-
     cmd_TRACE_help = ("")
     def cmd_TRACE(self, gcmd):
         self._log(LogVars.parse(gcmd, Level.TRACE))
