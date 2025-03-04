@@ -136,10 +136,7 @@ class MacroLog:
                 self.gcode._respond_error(message)
                 return
             elif lv.level == Level.ERROR:
-                #self.gcode._respond_error(message)
-                self.printer.command_error(message)
-                #self.printer.request_exit('error_exit')
-                return
+                raise self.printer.command_error(message)
             self.gcode.respond_info(message)
 
     def handle_connect(self):
