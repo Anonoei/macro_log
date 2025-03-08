@@ -67,6 +67,7 @@ log_level: 2
 #log_file_level: 0
 #format: '%(asctime)s %(message)s'
 #date_format: '%H:%M:%S'
+#klippy_rollover: True
 ```
 
 ## Macros

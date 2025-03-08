@@ -55,8 +55,22 @@ class QueueHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+class RotatingHandler(logging.handlers.TimedRotatingFileHandler):
+    def __init__(self, klippy_rollover, *args, **kwargs):
+        self.klippy_rollover = klippy_rollover
+        super().__init__(*args, **kwargs)
+    def doRollover(self):
+        if self.klippy_rollover:
+            import gc
+            import queuelogger as KlippyLogger
+            for obj in gc.get_objects():
+                if isinstance(obj, KlippyLogger.QueueListener):
+                    self.gcode._respond_error(f"_ML Rolling klippy.log")
+                    obj.doRollover()
+        super().doRollover()
+
 # Poll log queue on background thread and log each message to logfile
-class QueueListener(logging.handlers.TimedRotatingFileHandler):
+class QueueListener():
     def __init__(self, handler):
         self.bg_queue = queue.Queue()
         self.handler = handler
@@ -97,6 +111,7 @@ class MacroLog:
         self.log_file_level = config.getint('log_file_level', 0, minval=0, maxval=4)
         self.log_format = config.get('format', '%(asctime)s %(message)s')
         self.log_date_format = config.get('date_format', '%Y-%m-%d_%H:%M:%S')
+        self.klippy_rollover = config.getboolean('klippy_rollover', True)
 
         for lvl in Level:
             if self.log_level == lvl.value:
@@ -110,6 +125,7 @@ class MacroLog:
         self.gcode = self.printer.lookup_object('gcode')
 
         self.gcode.register_command('_ML', self.cmd_LOG, desc=self.cmd_LOG_help)
+        self.gcode.register_command('_ML_ROLLOVER', self.cmd_ROLLOVER, desc=self.cmd_ROLLOVER_help)
         self.gcode.register_command('_TRACE', self.cmd_TRACE, desc=self.cmd_TRACE_help)
         self.gcode.register_command('_DEBUG', self.cmd_DEBUG, desc=self.cmd_DEBUG_help)
         self.gcode.register_command('_INFO',  self.cmd_INFO,  desc=self.cmd_INFO_help)
@@ -143,8 +159,8 @@ class MacroLog:
         self._setup_logging()
 
     def handle_disconnect(self):
-        self._log(LogVars(Level.TRACE, "ML", "Disconnecting"))
-        self.shutdown()
+        self._log(LogVars(Level.TRACE, "ML", "Klippy disconnecting..."))
+        #self.shutdown()
 
     def _setup_logging(self):
         # Setup background file based logging before logging any messages
@@ -159,7 +175,7 @@ class MacroLog:
             log_path = log_path / 'ml.log'
 
         if not any(isinstance(h, QueueHandler) for h in self.logger.handlers):
-            handler = logging.handlers.TimedRotatingFileHandler(log_path, when='midnight', backupCount=2)
+            handler = RotatingHandler(self.klippy_rollover, log_path, when='midnight', backupCount=2)
             handler.setFormatter(MultiLineFormatter(self.log_format, datefmt=self.log_date_format))
             self.queue_listener = QueueListener(handler)
             self.logger.addHandler(QueueHandler(self.queue_listener.bg_queue))
@@ -187,6 +203,11 @@ class MacroLog:
                 self._log(LogVars(None, "MACRO_LOG", f"Failed to find log level from {lvl}"))
                 return
         self._log(LogVars.parse(gcmd, lvl))
+
+    cmd_ROLLOVER_help = ("")
+    def cmd_ROLLOVER(self, gcmd):
+        self.queue_listener.handler.doRollover()
+
     cmd_TRACE_help = ("")
     def cmd_TRACE(self, gcmd):
         self._log(LogVars.parse(gcmd, Level.TRACE))
